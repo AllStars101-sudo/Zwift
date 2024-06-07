@@ -32,7 +32,7 @@ oauth.register(
 )
 
 def truncate_text(text, max_tokens=15000):
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased') # replace 'bert-base-uncased' with a model that suits your needs
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')  # replace 'bert-base-uncased' with a model that suits your needs
     tokens = tokenizer.encode(text, return_tensors='pt')[0]
     if len(tokens) > max_tokens:
         tokens = tokens[:max_tokens]
@@ -53,7 +53,7 @@ def home():
 def test():
     given_name = ''
     if 'userinfo' in session:  # <-- Check here if 'userinfo' in session
-        given_name = session['userinfo']['given_name']
+        given_name = session['userinfo'].get('given_name', '')
     return render_template(
         "home.html",
         session=session.get("user"),
@@ -97,11 +97,11 @@ def logout():
 def calculate():
     if request.method == 'POST':
         data = request.get_json()
-        start = data['start']
-        end = data['end']
+        start = data.get('start', 'UNSW Sydney')
+        end = data.get('end', 'Bondi Beach')
     else:
-        start = session.get('start')
-        end = session.get('end')
+        start = session.get('start', 'UNSW Sydney')
+        end = session.get('end', 'Bondi Beach')
 
     print(f"Start Location: {start}")
     print(f"End Location: {end}")
@@ -119,7 +119,7 @@ def calculate():
     return jsonify({
         'start': start,
         'end': end,
-        #'distance': distance
+        'distance': distance
     })
 
 @app.route("/directions")
@@ -135,8 +135,8 @@ def directions():
 
 @app.route('/route_info', methods=['GET'])
 def route_info():
-    start = request.args.get('start')
-    end = request.args.get('end')
+    start = request.args.get('start', 'UNSW Sydney')
+    end = request.args.get('end', 'Bondi Beach')
 
     # Initialize data
     directions_data = places_data = elevation_data = weather_data = traffic_data = roadworks_data = None
@@ -150,22 +150,14 @@ def route_info():
         if 'routes' not in directions_data or not directions_data['routes']:
             return jsonify({'error': 'No routes found from Google Directions API'})
 
+        # Get points of interest near the midpoint from Google Places API
+        mid_index = len(directions_data['routes'][0]['legs'][0]['steps']) // 2
+        mid_step = directions_data['routes'][0]['legs'][0]['steps'][mid_index]
+        mid_point = polyline.decode(mid_step['polyline']['points'])[0]
 
-        #codec = PolylineCodec()
-        for leg in directions_data['routes'][0]['legs']:
-            for step in leg['steps']:
-                # Decode the polyline for this step
-                points = polyline.decode(step['polyline']['points'])
-                # Generate points along the step every 10 km
-                for i in range(0, len(points), 20):
-                    point = points[i]
-
-                    # Get points of interest near this point from Google Places API
-                     # Get points of interest near this point from Google Places API
-        places_response = requests.get(f'https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={point[0]},{point[1]}&radius=5000&key={env.get("GOOGLE_API_KEY")}')
+        places_response = requests.get(f'https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={mid_point[0]},{mid_point[1]}&radius=5000&key={env.get("GOOGLE_API_KEY")}')
         places_json = places_response.json()
-
-        places_data = [places_json['results'][:20]]
+        places_data = places_json.get('results', [])[:20]
         print("Places Data:", places_data)
 
         # Get latitude and longitude of start location from Google Geocoding API
@@ -179,7 +171,6 @@ def route_info():
         end_lat = geocoding_data_end['results'][0]['geometry']['location']['lat']
         end_lng = geocoding_data_end['results'][0]['geometry']['location']['lng']
 
-        # Get elevation data from Google Elevation API
         # Get elevation data from Google Elevation API
         elevation_response = requests.get(f'https://maps.googleapis.com/maps/api/elevation/json?path=enc:{polyline.encode([(start_lat, start_lng), (end_lat, end_lng)])}&samples=100&key={env.get("GOOGLE_API_KEY")}')
         elevation_data = elevation_response.json()
@@ -214,7 +205,7 @@ def route_info():
     calories_burned = distance * 50  # Rough estimate of calories burned per km
 
     # Prepare the data for the OpenAI API
-    data = f"I have collected the following data for a route from {start} to {end}. Can you summarize this information with a focus on health benefits of cycling? What about cycling on this route given its elevation? Give as much information about these as possible. Give a fun fact about cycling as well: {directions_data}, {places_data}, {elevation_data}, {weather_data}, {traffic_data}, {roadworks_data}."
+    data = f"I have collected the following data for a route from {start} to {end}. Can you summarize this information with a focus on health benefits of cycling? What about cycling on this route given its elevation? Give as much information about these as possible. Talk about the weather. Talk about the traffic. Give a fun fact about cycling as well: {directions_data}, {places_data}, {elevation_data}, {weather_data}, {traffic_data}, {roadworks_data}."
 
     # Truncate the data to fit within the token limit
     data = truncate_text(data)
@@ -233,8 +224,6 @@ def route_info():
     return jsonify({
         'start': start,
         'end': end,
-        #'directions': directions_data,
-        #'points_of_interest': places_data,
         'elevation': int(average_elevation),
         'weather': weather_data,
         'traffic': traffic_data,
